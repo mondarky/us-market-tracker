@@ -1,0 +1,23 @@
+date,ticker,action,shares,price_per_share,fees,portfolio,account,notes
+2026-05-21,REXC,BUY,50.0,21.78,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,OKLO,BUY,3.15781,63.4,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,NVDA,BUY,3.0,188.12,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,NLR,BUY,3.43136,131.28,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,MP,BUY,11.48667,64.29,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,LEU,BUY,2.56212,175.33,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,BWXT,BUY,2.96354,202.68,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,ATI,BUY,1.25,168.03,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,UUUU,BUY,8.20925,17.68,0.0,Speculative,Brokerage,migrated from holdings.csv
+2026-05-21,VUG,BUY,13.11973,85.61,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,VTI,BUY,6.38858,361.19,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,VNQ,BUY,3.02779,96.04,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,VGIT,BUY,17.13873,59.38,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,VEA,BUY,19.0314,70.8,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,VBK,BUY,2.27279,345.76,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,SGOV,BUY,4.77475,100.78,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,SCHP,BUY,10.81894,26.88,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,JEPQ,BUY,9.65173,58.79,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,IEMG,BUY,13.20189,77.67,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,AVUV,BUY,9.30425,120.72,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,AVEM,BUY,7.64418,89.36,0.0,Growth ETFs,Brokerage,migrated from holdings.csv
+2026-05-21,AVDV,BUY,6.00545,108.35,0.0,Growth ETFs,Brokerage,migrated from holdings.csv

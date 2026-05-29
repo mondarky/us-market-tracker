@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 from datetime import date
 
-from core.data import load_prices, load_holdings
+from core.data import load_prices, load_trade_log
 
 st.set_page_config(
     page_title="Investment Dashboard",
@@ -33,21 +33,21 @@ st.markdown("---")
 
 # ── Quick status overview ─────────────────────────────────────────────────────
 prices_df, price_file, price_date = load_prices()
-holdings = load_holdings()
+trade_log = load_trade_log()
 
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.subheader("📋 Holdings")
-    if holdings.empty:
-        st.write("No positions loaded.")
+    st.subheader("📋 Trade Log")
+    if trade_log.empty:
+        st.write("No trades logged yet.")
     else:
-        n_lots      = len(holdings)
-        n_tickers   = holdings["ticker"].nunique()
-        n_portfolios = holdings["portfolio"].nunique()
-        st.metric("Lots",       n_lots)
-        st.metric("Tickers",    n_tickers)
-        st.metric("Portfolios", n_portfolios)
+        n_trades     = len(trade_log)
+        n_tickers    = trade_log["ticker"].nunique()
+        n_portfolios = trade_log["portfolio"].nunique()
+        st.metric("Total trades",  n_trades)
+        st.metric("Tickers",       n_tickers)
+        st.metric("Portfolios",    n_portfolios)
 
 with c2:
     st.subheader("📡 Price Data")
@@ -64,8 +64,8 @@ with c2:
 
 with c3:
     st.subheader("📂 Data Location")
-    st.write("**Holdings:**")
-    st.code("data/holdings/holdings.csv")
+    st.write("**Trade log:**")
+    st.code("data/trade_log.csv")
     st.write("**Ticker prices:**")
     st.code("data/ticker_price/ticker_data_YYYYMMDD.csv")
     st.write("**Fetcher script:**")

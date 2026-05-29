@@ -1,1 +1,5 @@
 ticker_data_20260527.csv
+
+# Python cache
+__pycache__/
+*.pyc

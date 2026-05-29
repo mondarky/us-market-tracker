@@ -1,12 +1,12 @@
 """
-Sidebar components — data freshness indicator and holdings editor.
+Sidebar components — data freshness indicator and trade log editor.
 Renders directly into the current Streamlit sidebar context.
 """
 import streamlit as st
 from datetime import date
 
-from core.data  import TICKER_PRICE_DIR, save_holdings
-from core.utils import ACCOUNT_OPTIONS, HOLDINGS_COLS, STALE_THRESHOLD_DAYS
+from core.data  import TICKER_PRICE_DIR, save_trade_log
+from core.utils import ACCOUNT_OPTIONS, TRADE_LOG_COLS, STALE_THRESHOLD_DAYS
 
 
 def render_data_freshness(price_file: str | None, price_date) -> None:
@@ -25,59 +25,81 @@ def render_data_freshness(price_file: str | None, price_date) -> None:
                 )
     else:
         st.error(
-            f"No price CSV in `data/ticker_price/`.\n\n"
+            "No price CSV in `data/ticker_price/`.\n\n"
             "Run `fetch_tickers.py` first."
         )
 
 
-def render_holdings_editor(holdings) -> None:
+def render_trade_log_editor(trade_log) -> None:
     """
-    Inline data_editor for adding/editing/removing positions.
-    Includes Save and Export buttons. Call inside a `with st.sidebar:` block.
+    Inline data_editor for the trade log — add / edit / delete BUY and SELL rows.
+    Open positions are always derived automatically from the full log.
+    Call inside a `with st.sidebar:` block.
     """
-    existing_pfs = sorted(
-        {str(p) for p in holdings["portfolio"].dropna()
-         if str(p).strip() and str(p) != "nan"}
-    )
-    pf_hint = ", ".join(existing_pfs) if existing_pfs else "e.g. Growth, Core"
+    import pandas as pd
 
-    st.subheader("📋 Edit Positions")
+    # Drop the derived column before display — it's read-only
+    display_df = trade_log.drop(columns=["signed_shares"], errors="ignore").copy()
+
+    # DateColumn requires datetime.date objects, not Timestamps
+    if "date" in display_df.columns:
+        display_df["date"] = pd.to_datetime(
+            display_df["date"], errors="coerce"
+        ).dt.date
+
+    # Current portfolio names for the hint
+    existing_pfs = sorted(
+        {str(p) for p in display_df["portfolio"].dropna()
+         if str(p).strip() and str(p) not in ("nan", "Default")}
+    )
+    pf_hint = ", ".join(existing_pfs) if existing_pfs else "e.g. Growth, Speculative"
+
+    st.subheader("📋 Trade Log")
     st.caption(
         "• **+** to add a row  •  🗑 to delete  •  Edit inline  \n"
         f"• **Portfolio** — current: `{pf_hint}`  \n"
-        "• Blank portfolio → `Default`  \n"
+        "• Positions are derived automatically from BUY / SELL history  \n"
         "• Click **Save** when done"
     )
 
     edited = st.data_editor(
-        holdings,
+        display_df,
         num_rows="dynamic",
         use_container_width=True,
-        column_order=HOLDINGS_COLS,
+        column_order=TRADE_LOG_COLS,
         column_config={
-            "ticker":        st.column_config.TextColumn(
+            "date":            st.column_config.DateColumn(
+                "Date", format="YYYY-MM-DD", help="Trade execution date"
+            ),
+            "ticker":          st.column_config.TextColumn(
                 "Ticker", max_chars=15, help="Symbol e.g. NVDA, VTI"
             ),
-            "shares":        st.column_config.NumberColumn(
+            "action":          st.column_config.SelectboxColumn(
+                "Action", options=["BUY", "SELL"],
+                help="BUY to open / add; SELL to close / reduce"
+            ),
+            "shares":          st.column_config.NumberColumn(
                 "Shares", min_value=0.00001, format="%.5f", step=0.00001,
-                help="Fractional shares — min 0.00001"
+                help="Number of shares — always positive"
             ),
-            "avg_cost":      st.column_config.NumberColumn(
-                "Avg Cost ($)", min_value=0.01, format="%.2f", step=0.01
+            "price_per_share": st.column_config.NumberColumn(
+                "Price/Share ($)", min_value=0.01, format="%.4f", step=0.01,
+                help="Execution price per share before fees"
             ),
-            "purchase_date": st.column_config.DateColumn(
-                "Buy Date", format="YYYY-MM-DD"
+            "fees":            st.column_config.NumberColumn(
+                "Fees ($)", min_value=0.0, format="%.2f", step=0.01,
+                help="Brokerage commission — 0 if none"
             ),
-            "account":       st.column_config.SelectboxColumn(
-                "Account", options=ACCOUNT_OPTIONS
-            ),
-            "portfolio":     st.column_config.TextColumn(
+            "portfolio":       st.column_config.TextColumn(
                 "Portfolio", max_chars=30,
                 help="Groups positions into separate tabs. Blank → 'Default'."
             ),
-            "notes":         st.column_config.TextColumn("Notes"),
+            "account":         st.column_config.SelectboxColumn(
+                "Account", options=ACCOUNT_OPTIONS
+            ),
+            "notes":           st.column_config.TextColumn("Notes"),
         },
-        key="holdings_editor",
+        key="trade_log_editor",
     )
 
     col_save, col_dl = st.columns(2)
@@ -86,17 +108,21 @@ def render_holdings_editor(holdings) -> None:
     with col_save:
         if st.button("💾 Save", use_container_width=True, type="primary"):
             clean = edited.copy()
-            clean["ticker"] = clean["ticker"].astype(str).str.strip().str.upper()
+            # Normalise key fields
+            clean["ticker"]    = clean["ticker"].astype(str).str.strip().str.upper()
+            clean["action"]    = clean["action"].astype(str).str.strip().str.upper()
             clean["portfolio"] = (
                 clean["portfolio"].fillna("").astype(str).str.strip()
                 .replace("", "Default")
             )
+            # Drop rows with no ticker or no valid action
             clean = clean[
                 clean["ticker"].notna()
                 & (clean["ticker"].str.len() > 0)
                 & (clean["ticker"] != "NAN")
+                & clean["action"].isin(["BUY", "SELL"])
             ]
-            save_holdings(clean)
+            save_trade_log(clean)
             st.cache_data.clear()
             st.success("✅ Saved!")
             saved = True
@@ -104,8 +130,8 @@ def render_holdings_editor(holdings) -> None:
     with col_dl:
         st.download_button(
             "⬇ Export",
-            data=holdings.to_csv(index=False).encode(),
-            file_name="holdings.csv",
+            data=display_df.to_csv(index=False).encode(),
+            file_name="trade_log.csv",
             mime="text/csv",
             use_container_width=True,
         )

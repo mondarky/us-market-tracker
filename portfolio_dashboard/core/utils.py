@@ -6,9 +6,13 @@ import pandas as pd
 import plotly.express as px
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-ACCOUNT_OPTIONS      = ["Brokerage", "IRA", "Roth IRA", "401k", "Other"]
-HOLDINGS_COLS        = ["ticker", "shares", "avg_cost", "purchase_date",
-                         "account", "portfolio", "notes"]
+ACCOUNT_OPTIONS = ["Brokerage", "IRA", "Roth IRA", "401k", "ESPP", "Other"]
+
+# Trade log schema — matches data/trade_log.csv and core/holdings.py
+TRADE_LOG_COLS = [
+    "date", "ticker", "action", "shares", "price_per_share",
+    "fees", "portfolio", "account", "notes",
+]
 STALE_THRESHOLD_DAYS = 3
 PALETTE              = px.colors.qualitative.Pastel   # stable cross-chart palette
 

@@ -3,6 +3,7 @@ Portfolio calculations — pure Python/pandas, no Streamlit, no I/O.
 All functions are safe to unit-test independently.
 """
 import pandas as pd
+from core.holdings import get_open_positions
 
 
 def latest_close(prices_df: pd.DataFrame, ticker: str) -> float | None:
@@ -21,62 +22,67 @@ def latest_close(prices_df: pd.DataFrame, ticker: str) -> float | None:
 
 
 def build_portfolio(
-    holdings: pd.DataFrame,
+    trade_log: pd.DataFrame,
     prices_df,
     portfolio_filter: str | None = None,
 ) -> pd.DataFrame:
     """
-    Aggregate lots, attach current prices, compute unrealised P/L.
+    Derive open positions from the trade log via FIFO, attach current prices,
+    compute unrealised P/L.
 
     portfolio_filter=None  → group by (Portfolio, Ticker) — "All" view
-    portfolio_filter="X"   → filter to X, group by Ticker — single-portfolio view
+    portfolio_filter="X"   → filter to X — single-portfolio view
     Always includes a "Portfolio" column in the output.
     """
-    if holdings.empty:
+    if trade_log.empty:
         return pd.DataFrame()
 
-    src = (holdings if portfolio_filter is None
-           else holdings[holdings["portfolio"] == portfolio_filter])
-    if src.empty:
+    # FIFO open positions per (ticker × portfolio × account)
+    positions = get_open_positions(trade_log)
+    if positions.empty:
         return pd.DataFrame()
 
+    if portfolio_filter is not None:
+        positions = positions[positions["portfolio"] == portfolio_filter]
+        if positions.empty:
+            return pd.DataFrame()
+
+    # Aggregate across accounts within each (portfolio, ticker)
     multi_key = portfolio_filter is None
     group_by  = ["portfolio", "ticker"] if multi_key else "ticker"
 
     rows = []
-    for keys, group in src.groupby(group_by, sort=True):
+    for keys, grp in positions.groupby(group_by, sort=True):
         if multi_key:
             pf_name, ticker = keys   # tuple from multi-column groupby
         else:
             ticker  = keys           # scalar from single-column groupby
             pf_name = portfolio_filter
 
-        total_shares = group["shares"].sum()
+        total_shares = grp["shares"].sum()
         if total_shares < 0.00001:
             continue
 
-        wavg_cost = (group["shares"] * group["avg_cost"]).sum() / total_shares
-        accts = ", ".join(
-            sorted({str(a) for a in group["account"].dropna()
-                    if str(a).strip() and str(a) != "nan"})
-        )
+        total_cost = grp["total_cost"].sum()
+        wavg_cost  = total_cost / total_shares   # weighted avg across accounts
+        accts      = ", ".join(sorted(grp["account"].dropna().astype(str).unique()))
+
         cur_px  = latest_close(prices_df, ticker) if prices_df is not None else None
-        cost    = total_shares * wavg_cost
         mkt_val = total_shares * cur_px if cur_px is not None else None
-        pl_d    = mkt_val - cost if mkt_val is not None else None
-        pl_pct  = pl_d / cost * 100 if (cost > 0 and pl_d is not None) else None
+        pl_d    = mkt_val - total_cost if mkt_val is not None else None
+        pl_pct  = pl_d / total_cost * 100 if (total_cost > 0 and pl_d is not None) else None
 
         rows.append({
             "Portfolio":     pf_name,
             "Ticker":        ticker,
-            "Lots":          len(group),
-            "Shares":        total_shares,
-            "Avg Cost":      wavg_cost,
+            "Lots":          int(grp["lots"].sum()),
+            "Shares":        round(total_shares, 6),
+            "Avg Cost":      round(wavg_cost, 4),
             "Current Price": cur_px,
-            "Cost Basis":    cost,
-            "Market Value":  mkt_val,
-            "P/L $":         pl_d,
-            "P/L %":         pl_pct,
+            "Cost Basis":    round(total_cost, 4),
+            "Market Value":  round(mkt_val, 2)   if mkt_val is not None else None,
+            "P/L $":         round(pl_d, 2)       if pl_d    is not None else None,
+            "P/L %":         round(pl_pct, 4)     if pl_pct  is not None else None,
             "Account(s)":    accts,
             "_has_price":    cur_px is not None,
         })

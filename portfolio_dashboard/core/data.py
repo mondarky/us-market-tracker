@@ -9,15 +9,43 @@ import pandas as pd
 from pathlib import Path
 from datetime import date
 
-from core.utils import HOLDINGS_COLS
-
 # ── Canonical paths (resolved from this file's location) ──────────────────────
 _PKG_ROOT        = Path(__file__).parent.parent          # portfolio_dashboard/
 FETCHER_DIR      = _PKG_ROOT.parent / "ticker_fetcher"   # ../ticker_fetcher/
 DATA_DIR         = _PKG_ROOT / "data"
-HOLDINGS_DIR     = DATA_DIR / "holdings"
 TICKER_PRICE_DIR = DATA_DIR / "ticker_price"
-HOLDINGS_FILE    = HOLDINGS_DIR / "holdings.csv"
+TRADE_LOG_FILE   = DATA_DIR / "trade_log.csv"
+
+
+# ── Trade log I/O ─────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def load_trade_log() -> pd.DataFrame:
+    """
+    Load trade_log.csv with caching (TTL 5 min).
+    Creates an empty file with correct headers if it doesn't exist yet.
+    The returned DataFrame includes a derived 'signed_shares' column.
+    """
+    from core.holdings import load_trade_log as _load, create_empty_trade_log
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if not TRADE_LOG_FILE.exists():
+        return create_empty_trade_log(TRADE_LOG_FILE)
+    try:
+        return _load(TRADE_LOG_FILE)
+    except FileNotFoundError:
+        return create_empty_trade_log(TRADE_LOG_FILE)
+
+
+def save_trade_log(df: pd.DataFrame) -> None:
+    """
+    Persist the edited trade log.
+    Converts date objects → Timestamps so date_format='%Y-%m-%d' applies cleanly.
+    """
+    from core.holdings import save_trade_log as _save
+    save_df = df.copy()
+    if "date" in save_df.columns:
+        save_df["date"] = pd.to_datetime(save_df["date"], errors="coerce")
+    _save(save_df, TRADE_LOG_FILE)
 
 
 # ── Price data ────────────────────────────────────────────────────────────────
@@ -41,47 +69,6 @@ def load_prices() -> tuple:
     except Exception:
         fdate = None
     return df, path.name, fdate
-
-
-# ── Holdings data ─────────────────────────────────────────────────────────────
-
-def load_holdings() -> pd.DataFrame:
-    """Load holdings.csv; create file with headers if missing."""
-    HOLDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    if not HOLDINGS_FILE.exists():
-        empty = pd.DataFrame(columns=HOLDINGS_COLS)
-        empty.to_csv(HOLDINGS_FILE, index=False)
-        return empty
-
-    df = pd.read_csv(HOLDINGS_FILE, dtype=str)
-    df["shares"]        = pd.to_numeric(df.get("shares"),   errors="coerce").fillna(0)
-    df["avg_cost"]      = pd.to_numeric(df.get("avg_cost"), errors="coerce").fillna(0)
-    df["ticker"]        = df["ticker"].astype(str).str.strip().str.upper()
-    # DateColumn requires date objects, not strings
-    df["purchase_date"] = pd.to_datetime(
-        df.get("purchase_date"), errors="coerce"
-    ).dt.date
-    # Normalise portfolio — blank / NaN → "Default"
-    df["portfolio"] = (
-        df["portfolio"].fillna("").astype(str).str.strip().replace("", "Default")
-        if "portfolio" in df.columns
-        else "Default"
-    )
-    for col in HOLDINGS_COLS:
-        if col not in df.columns:
-            df[col] = ""
-    return df[HOLDINGS_COLS]
-
-
-def save_holdings(df: pd.DataFrame) -> None:
-    """Persist holdings to CSV, converting date objects back to ISO strings."""
-    HOLDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    save_df = df.copy()
-    if "purchase_date" in save_df.columns:
-        save_df["purchase_date"] = pd.to_datetime(
-            save_df["purchase_date"], errors="coerce"
-        ).apply(lambda d: d.strftime("%Y-%m-%d") if not pd.isnull(d) else "")
-    save_df.to_csv(HOLDINGS_FILE, index=False)
 
 
 # ── Market summary ────────────────────────────────────────────────────────────
@@ -114,7 +101,6 @@ def build_market_summary(prices_df) -> pd.DataFrame:
         d_from = ok["Date"].iloc[0].date()
         d_to   = ok["Date"].iloc[-1].date()
 
-        # Show year on both ends only when they differ
         date_range = (
             f"{d_from.strftime('%d %b')} – {d_to.strftime('%d %b %y')}"
             if d_from.year == d_to.year

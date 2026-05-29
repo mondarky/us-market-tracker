@@ -9,11 +9,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
-from core.data      import load_prices, load_holdings
+from core.data      import load_prices, load_trade_log
 from core.analysis  import build_portfolio, portfolio_summary
 from core.utils     import style_portfolio_summary
 from components.charts  import render_portfolio_view
-from components.sidebar import render_data_freshness, render_holdings_editor
+from components.sidebar import render_data_freshness, render_trade_log_editor
 
 st.set_page_config(
     page_title="Portfolio — Investment Dashboard",
@@ -25,27 +25,27 @@ st.set_page_config(
 
 def main() -> None:
     prices_df, price_file, price_date = load_prices()
-    holdings = load_holdings()
+    trade_log = load_trade_log()
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         render_data_freshness(price_file, price_date)
         st.markdown("---")
-        render_holdings_editor(holdings)
+        render_trade_log_editor(trade_log)
 
     # ── Main content ──────────────────────────────────────────────────────────
     st.title("📈 Portfolio Dashboard")
     st.caption(f"Price source: `{price_file or 'None'}`")
 
-    if holdings.empty:
-        st.info("👈 No holdings yet — add positions in the sidebar.")
+    if trade_log.empty:
+        st.info("👈 No trades logged yet — add BUY entries in the sidebar.")
         return
 
-    portfolios = sorted(holdings["portfolio"].dropna().unique().tolist())
-    port_all   = build_portfolio(holdings, prices_df)
+    portfolios = sorted(trade_log["portfolio"].dropna().unique().tolist())
+    port_all   = build_portfolio(trade_log, prices_df)
 
     if port_all.empty:
-        st.warning("All rows have zero shares — check your holdings data.")
+        st.warning("No open positions found — check your trade log data.")
         return
 
     # ── One tab per portfolio + combined "All" ────────────────────────────────
@@ -70,7 +70,7 @@ def main() -> None:
 
     for i, pf in enumerate(portfolios):
         with tabs[i + 1]:
-            port_pf = build_portfolio(holdings, prices_df, portfolio_filter=pf)
+            port_pf = build_portfolio(trade_log, prices_df, portfolio_filter=pf)
             render_portfolio_view(port_pf, show_portfolio=False, key_suffix=f"pf_{i}")
 
 
