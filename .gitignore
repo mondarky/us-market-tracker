@@ -1,5 +1,35 @@
-ticker_data_20260527.csv
+# ── Personal financial data ───────────────────────────────────────────────────
+# These files contain sensitive data (trade history, holdings, prices paid).
+# Keep a secure copy in OneDrive / encrypted backup — NOT in git.
+portfolio_dashboard/data/trade_log.csv
+portfolio_dashboard/data/holdings/
 
-# Python cache
+# ── Regeneratable price data ──────────────────────────────────────────────────
+# Ticker CSVs are produced by running fetch_tickers.py — no need to version them.
+# They grow with every fetch run and would bloat the repo over time.
+portfolio_dashboard/data/ticker_price/
+
+# ── Python cache ──────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# ── Streamlit secrets (API keys, credentials) ─────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Environment / IDE ─────────────────────────────────────────────────────────
+.env
+.env.*
+*.env
+.venv/
+venv/
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# ── OS artefacts ──────────────────────────────────────────────────────────────
+desktop.ini
+Thumbs.db
+.DS_Store

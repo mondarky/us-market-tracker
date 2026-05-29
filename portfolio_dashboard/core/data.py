@@ -127,7 +127,23 @@ def load_performance_series(
     if (isinstance(trade_log, pd.DataFrame) and trade_log.empty) or \
        (isinstance(prices_df, pd.DataFrame) and prices_df.empty):
         return pd.DataFrame()
-    return get_portfolio_value_series(trade_log, prices_df, portfolio=portfolio)
+
+    # Python 3.14 + pandas 2.x default pd.to_datetime() to datetime64[us].
+    # get_open_positions() uses pd.Timestamp for the as_of comparison, which is
+    # internally datetime64[ns], causing a unit-mismatch TypeError.
+    # yfinance also returns timezone-aware (UTC) dates; strip tz before casting.
+    def _to_naive_ns(series: pd.Series) -> pd.Series:
+        s = pd.to_datetime(series, errors="coerce")
+        if s.dt.tz is not None:                        # strip UTC / any tz
+            s = s.dt.tz_convert("UTC").dt.tz_localize(None)
+        return s.astype("datetime64[ns]")
+
+    tl = trade_log.copy()
+    p  = prices_df.copy()
+    tl["date"] = _to_naive_ns(tl["date"])
+    p["Date"]  = _to_naive_ns(p["Date"])
+
+    return get_portfolio_value_series(tl, p, portfolio=portfolio)
 
 
 # ── Market summary ────────────────────────────────────────────────────────────
