@@ -28,7 +28,10 @@ except ImportError:
 # --- Configuration ---
 SCRIPT_DIR   = Path(__file__).parent
 TICKER_FILE  = SCRIPT_DIR / "tickers.txt"
-OUTPUT_FILE  = SCRIPT_DIR / f"ticker_data_{date.today().strftime('%Y%m%d')}.csv"
+# Output goes into the dashboard's data folder so the app picks it up automatically
+OUTPUT_DIR   = SCRIPT_DIR.parent / "portfolio_dashboard" / "data" / "ticker_price"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_FILE  = OUTPUT_DIR / f"ticker_data_{date.today().strftime('%Y%m%d')}.csv"
 PERIOD       = "1mo"   # how much history to fetch per ticker
 INTERVAL     = "1d"    # data granularity
 
@@ -165,7 +168,7 @@ def main() -> None:
     print(f"  OK with warnings   : {len(ok_stale) + len(ok_short) - len(set(ok_stale) & set(ok_short))}"
           f"  (STALE: {len(ok_stale)}, SHORT: {len(ok_short)})")
     print(f"  Failed (ERROR)     : {len(errors)}")
-    print(f"  Output file        : {OUTPUT_FILE.name}")
+    print(f"  Output file        : portfolio_dashboard/data/ticker_price/{OUTPUT_FILE.name}")
     print(f"  Total rows written : {len(final)}")
     print(f"  Run completed at   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
