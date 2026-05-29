@@ -9,11 +9,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
-from core.data      import load_prices, load_trade_log
+from core.data      import load_prices, load_trade_log, load_fx_rates
 from core.analysis  import build_portfolio, portfolio_summary
 from core.utils     import style_portfolio_summary
 from components.charts  import render_portfolio_view
-from components.sidebar import render_data_freshness, render_trade_log_editor
+from components.sidebar import render_data_freshness, render_trade_log_editor, render_currency_selector
 
 st.set_page_config(
     page_title="Portfolio — Investment Dashboard",
@@ -26,9 +26,12 @@ st.set_page_config(
 def main() -> None:
     prices_df, price_file, price_date = load_prices()
     trade_log = load_trade_log()
+    fx_rates  = load_fx_rates()
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
+        cx = render_currency_selector(fx_rates)
+        st.markdown("---")
         render_data_freshness(price_file, price_date)
         st.markdown("---")
         render_trade_log_editor(trade_log)
@@ -57,7 +60,7 @@ def main() -> None:
             st.subheader("📂 Portfolio Breakdown")
             summ = portfolio_summary(port_all)
             st.dataframe(
-                style_portfolio_summary(summ),
+                style_portfolio_summary(summ, cx=cx),
                 use_container_width=True, hide_index=True,
                 height=50 + 35 * len(summ),
             )
@@ -66,12 +69,13 @@ def main() -> None:
             port_all,
             show_portfolio=len(portfolios) > 1,
             key_suffix="all",
+            cx=cx,
         )
 
     for i, pf in enumerate(portfolios):
         with tabs[i + 1]:
             port_pf = build_portfolio(trade_log, prices_df, portfolio_filter=pf)
-            render_portfolio_view(port_pf, show_portfolio=False, key_suffix=f"pf_{i}")
+            render_portfolio_view(port_pf, show_portfolio=False, key_suffix=f"pf_{i}", cx=cx)
 
 
 main()

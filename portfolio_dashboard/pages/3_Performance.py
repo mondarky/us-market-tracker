@@ -11,10 +11,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
-from core.data      import load_prices, load_trade_log, load_performance_series
+from core.data      import load_prices, load_trade_log, load_performance_series, load_fx_rates
 from core.analysis  import get_weekly_performance
 from components.charts  import render_performance_charts
-from components.sidebar import render_data_freshness
+from components.sidebar import render_data_freshness, render_currency_selector
 
 st.set_page_config(
     page_title="Performance — Investment Dashboard",
@@ -27,8 +27,11 @@ st.set_page_config(
 def main() -> None:
     prices_df, price_file, price_date = load_prices()
     trade_log = load_trade_log()
+    fx_rates  = load_fx_rates()
 
     with st.sidebar:
+        cx = render_currency_selector(fx_rates)
+        st.markdown("---")
         render_data_freshness(price_file, price_date)
         if prices_df is not None:
             n_days = prices_df["Date"].dropna().nunique()
@@ -57,13 +60,13 @@ def main() -> None:
     with tabs[0]:
         series = load_performance_series(trade_log, prices_df, portfolio=None)
         weekly = get_weekly_performance(series)
-        render_performance_charts(series, weekly, key_suffix="all")
+        render_performance_charts(series, weekly, key_suffix="all", cx=cx)
 
     for i, pf in enumerate(portfolios):
         with tabs[i + 1]:
             series = load_performance_series(trade_log, prices_df, portfolio=pf)
             weekly = get_weekly_performance(series)
-            render_performance_charts(series, weekly, key_suffix=f"pf_{i}")
+            render_performance_charts(series, weekly, key_suffix=f"pf_{i}", cx=cx)
 
 
 main()

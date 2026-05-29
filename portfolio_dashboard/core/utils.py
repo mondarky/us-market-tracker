@@ -13,15 +13,77 @@ TRADE_LOG_COLS = [
     "date", "ticker", "action", "shares", "price_per_share",
     "fees", "portfolio", "account", "notes",
 ]
-STALE_THRESHOLD_DAYS = 3
-PALETTE              = px.colors.qualitative.Pastel   # stable cross-chart palette
 
-# ── Format helpers ────────────────────────────────────────────────────────────
-MONEY_FMT  = "${:,.2f}"
+STALE_THRESHOLD_DAYS = 3
+PALETTE = px.colors.qualitative.Pastel   # stable cross-chart palette
+
+# ── Currency support ──────────────────────────────────────────────────────────
+
+CURRENCIES = {
+    "USD": {"symbol": "$",   "decimals": 2, "name": "US Dollar"},
+    "THB": {"symbol": "฿",   "decimals": 2, "name": "Thai Baht"},
+    "JPY": {"symbol": "¥",   "decimals": 0, "name": "Japanese Yen"},
+    "HKD": {"symbol": "HK$", "decimals": 2, "name": "Hong Kong Dollar"},
+}
+
+
+def make_cx(code: str, fx_rates: dict) -> dict:
+    """
+    Build a currency-context dict from a code and a rates lookup.
+
+    Returned dict:
+        code      – "USD" / "THB" / "JPY" / "HKD"
+        symbol    – "฿" etc.
+        decimals  – 0 for JPY, 2 for others
+        name      – full currency name
+        rate      – multiplier to apply to USD amounts before display
+    """
+    info = CURRENCIES.get(code, CURRENCIES["USD"])
+    return {
+        "code":     code,
+        "symbol":   info["symbol"],
+        "decimals": info["decimals"],
+        "name":     info["name"],
+        "rate":     float(fx_rates.get(code) or 1.0),
+    }
+
+
+DEFAULT_CX = make_cx("USD", {"USD": 1.0})   # fallback when no cx is passed
+
+
+# ── Format helpers (USD-fixed — used outside styled tables) ───────────────────
 SHARES_FMT = lambda v: f"{v:,.5f}".rstrip("0").rstrip(".") if pd.notna(v) else "—"
-OPT_MONEY  = lambda v: f"${v:,.2f}" if pd.notna(v) else "—"
-PL_D_FMT   = lambda v: f"${v:+,.2f}" if pd.notna(v) else "—"
 PL_P_FMT   = lambda v: f"{v:+.2f}%" if pd.notna(v) else "—"
+
+
+def _cx_formatters(cx: dict):
+    """
+    Return (money, money_signed) callables that convert USD → cx currency.
+
+    money(v)        → "฿36,500.00"  or  "¥5,432"
+    money_signed(v) → "+฿1,234.56"  or  "-¥500"
+    The sign is placed BEFORE the symbol so Streamlit metric delta colouring works.
+    """
+    sym  = cx["symbol"]
+    dec  = cx["decimals"]
+    rate = cx["rate"]
+
+    def money(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "—"
+        c = v * rate
+        return f"{sym}{c:,.{dec}f}" if dec > 0 else f"{sym}{c:,.0f}"
+
+    def money_signed(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "—"
+        c = v * rate
+        s = "+" if c >= 0 else "-"
+        a = abs(c)
+        return f"{s}{sym}{a:,.{dec}f}" if dec > 0 else f"{s}{sym}{a:,.0f}"
+
+    return money, money_signed
+
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
 
@@ -49,10 +111,17 @@ def apply_pl_color(styler, cols: list[str]):
 
 # ── Styler functions ──────────────────────────────────────────────────────────
 
-def style_holdings_table(df: pd.DataFrame, show_portfolio: bool = False):
-    """Style the main per-ticker holdings table."""
-    col_order = ["Portfolio", "Ticker", "Lots", "Shares", "Avg Cost",
-                 "Current Price", "Cost Basis", "Market Value", "P/L $", "P/L %", "Account(s)"]
+def style_holdings_table(
+    df: pd.DataFrame,
+    show_portfolio: bool = False,
+    cx: dict | None = None,
+):
+    """Style the main per-ticker holdings table, converting values to cx currency."""
+    cx = cx or DEFAULT_CX
+    _m, _ms = _cx_formatters(cx)
+
+    col_order = ["Portfolio", "Ticker", "Lots", "Shares", "Avg Cost", "Current Price",
+                 "Cost Basis", "Market Value", "P/L $", "P/L %", "Account(s)"]
     if not show_portfolio:
         col_order = [c for c in col_order if c != "Portfolio"]
     display_cols = [c for c in col_order if c in df.columns]
@@ -61,11 +130,11 @@ def style_holdings_table(df: pd.DataFrame, show_portfolio: bool = False):
     fmt = {
         "Lots":          "{:,d}",
         "Shares":        SHARES_FMT,
-        "Avg Cost":      MONEY_FMT,
-        "Current Price": OPT_MONEY,
-        "Cost Basis":    MONEY_FMT,
-        "Market Value":  OPT_MONEY,
-        "P/L $":         PL_D_FMT,
+        "Avg Cost":      _m,
+        "Current Price": lambda v: _m(v) if pd.notna(v) else "—",
+        "Cost Basis":    _m,
+        "Market Value":  lambda v: _m(v) if pd.notna(v) else "—",
+        "P/L $":         lambda v: _ms(v) if pd.notna(v) else "—",
         "P/L %":         PL_P_FMT,
     }
     fmt    = {k: v for k, v in fmt.items() if k in display_cols}
@@ -81,13 +150,16 @@ def style_holdings_table(df: pd.DataFrame, show_portfolio: bool = False):
     return styler
 
 
-def style_portfolio_summary(df: pd.DataFrame):
+def style_portfolio_summary(df: pd.DataFrame, cx: dict | None = None):
     """Style the per-portfolio rollup table."""
+    cx = cx or DEFAULT_CX
+    _m, _ms = _cx_formatters(cx)
+
     fmt = {
         "Positions":    "{:,d}",
-        "Cost Basis":   MONEY_FMT,
-        "Market Value": OPT_MONEY,
-        "P/L $":        PL_D_FMT,
+        "Cost Basis":   _m,
+        "Market Value": lambda v: _m(v) if pd.notna(v) else "—",
+        "P/L $":        lambda v: _ms(v) if pd.notna(v) else "—",
         "P/L %":        PL_P_FMT,
     }
     fmt    = {k: v for k, v in fmt.items() if k in df.columns}
@@ -96,11 +168,14 @@ def style_portfolio_summary(df: pd.DataFrame):
 
 
 def style_market_summary(df: pd.DataFrame):
-    """Style the market-data ticker summary table."""
+    """Style the market-data ticker summary table (always USD — no cx needed)."""
+    def _opt(v):
+        return f"${v:,.2f}" if pd.notna(v) else "—"
+
     fmt = {
-        "Latest Close": OPT_MONEY,
-        "Period High":  OPT_MONEY,
-        "Period Low":   OPT_MONEY,
+        "Latest Close": _opt,
+        "Period High":  _opt,
+        "Period Low":   _opt,
     }
     fmt    = {k: v for k, v in fmt.items() if k in df.columns}
     styler = df.style.format(fmt, na_rep="—")

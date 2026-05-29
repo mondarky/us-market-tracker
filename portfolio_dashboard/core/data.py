@@ -36,6 +36,29 @@ def load_trade_log() -> pd.DataFrame:
         return create_empty_trade_log(TRADE_LOG_FILE)
 
 
+@st.cache_data(ttl=3600)   # 1-hour cache — daily rate is sufficient
+def load_fx_rates() -> dict:
+    """
+    Fetch current USD → THB / JPY / HKD exchange rates via yfinance.
+    Returns {"USD": 1.0, "THB": float|None, "JPY": float|None, "HKD": float|None}.
+    None means the rate could not be fetched; the UI will hide that option.
+    Cached for 1 hour — no need for real-time rates.
+    """
+    import yfinance as yf
+    pairs = {"THB": "USDTHB=X", "JPY": "USDJPY=X", "HKD": "USDHKD=X"}
+    rates: dict = {"USD": 1.0}
+    for code, ticker in pairs.items():
+        try:
+            rates[code] = float(yf.Ticker(ticker).fast_info["last_price"])
+        except Exception:
+            try:
+                hist = yf.Ticker(ticker).history(period="2d")["Close"].dropna()
+                rates[code] = float(hist.iloc[-1]) if not hist.empty else None
+            except Exception:
+                rates[code] = None
+    return rates
+
+
 def save_trade_log(df: pd.DataFrame) -> None:
     """
     Persist the edited trade log.

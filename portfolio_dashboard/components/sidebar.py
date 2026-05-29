@@ -6,7 +6,7 @@ import streamlit as st
 from datetime import date
 
 from core.data  import TICKER_PRICE_DIR, save_trade_log
-from core.utils import ACCOUNT_OPTIONS, TRADE_LOG_COLS, STALE_THRESHOLD_DAYS
+from core.utils import ACCOUNT_OPTIONS, TRADE_LOG_COLS, STALE_THRESHOLD_DAYS, CURRENCIES, make_cx
 
 
 def render_data_freshness(price_file: str | None, price_date) -> None:
@@ -138,3 +138,31 @@ def render_trade_log_editor(trade_log) -> None:
 
     if saved:
         st.rerun()
+
+
+def render_currency_selector(fx_rates: dict) -> dict:
+    """
+    Render a currency dropdown above the other sidebar widgets.
+    Only shows currencies whose rate was successfully fetched.
+    Sets st.session_state["display_currency"] and returns the cx dict.
+    Call inside a `with st.sidebar:` block.
+    """
+    available = ["USD"] + [c for c in ["THB", "JPY", "HKD"]
+                           if fx_rates.get(c) is not None]
+
+    selected = st.selectbox(
+        "💱 Display currency",
+        options=available,
+        format_func=lambda c: f"{CURRENCIES[c]['symbol']} {c} — {CURRENCIES[c]['name']}",
+        key="display_currency",
+    )
+
+    cx = make_cx(selected, fx_rates)
+
+    if selected != "USD":
+        rate = cx["rate"]
+        dec  = cx["decimals"]
+        fmt  = f"{rate:,.{dec}f}" if dec > 0 else f"{rate:,.0f}"
+        st.caption(f"Rate: 1 USD = {fmt} {selected}")
+
+    return cx

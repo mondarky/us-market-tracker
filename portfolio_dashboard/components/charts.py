@@ -1,12 +1,19 @@
 """
 Chart-building components — Streamlit + Plotly rendering only.
 No data I/O, no business logic.
+
+Currency context (cx) is an optional dict:
+    {"code": "THB", "symbol": "฿", "decimals": 2, "rate": 36.5}
+When None or omitted, defaults to USD (rate=1.0, symbol="$").
 """
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-from core.utils import PALETTE, style_holdings_table
+from core.utils import (
+    PALETTE, DEFAULT_CX, _cx_formatters,
+    PL_P_FMT, SHARES_FMT, style_holdings_table,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -17,12 +24,18 @@ def portfolio_color_map(port) -> dict[str, str]:
     return {pf: PALETTE[i % len(PALETTE)] for i, pf in enumerate(pfs)}
 
 
+def _tick_fmt(cx: dict) -> str:
+    """Return a Plotly tickformat string for the given currency."""
+    return ",.0f" if cx["decimals"] == 0 else ",.2f"
+
+
 # ── Market data chart ─────────────────────────────────────────────────────────
 
 def render_ticker_chart(ok_df, ticker: str, key_suffix: str) -> None:
     """
     4-metric stats row + candlestick chart for a single ticker.
-    key_suffix must be unique per ticker to avoid Streamlit element-ID collisions.
+    Always in USD — Market Data page does not use currency conversion.
+    key_suffix must be unique per ticker.
     """
     latest  = float(ok_df["Close"].iloc[-1])
     p_high  = float(ok_df["High"].max()) if "High" in ok_df.columns else float(ok_df["Close"].max())
@@ -61,15 +74,24 @@ def render_ticker_chart(ok_df, ticker: str, key_suffix: str) -> None:
 
 # ── Portfolio view ────────────────────────────────────────────────────────────
 
-def render_portfolio_view(port, show_portfolio: bool, key_suffix: str) -> None:
+def render_portfolio_view(
+    port,
+    show_portfolio: bool,
+    key_suffix: str,
+    cx: dict | None = None,
+) -> None:
     """
     Render the full portfolio view for one tab:
       4 metric cards → sortable holdings table → allocation pie + P/L bars.
 
-    show_portfolio=True   → show Portfolio column; colour bars by portfolio
-    show_portfolio=False  → hide Portfolio column; colour P/L bars green/red
-    key_suffix            → unique string per tab (e.g. "all", "pf_0")
+    cx – currency context dict (default: USD). Values in `port` are assumed to
+         be in USD; conversion to display currency happens at render time.
     """
+    cx = cx or DEFAULT_CX
+    _m, _ms = _cx_formatters(cx)
+    sym = cx["symbol"]
+    dec = cx["decimals"]
+
     if port.empty:
         st.info("No holdings to display.")
         return
@@ -85,13 +107,14 @@ def render_portfolio_view(port, show_portfolio: bool, key_suffix: str) -> None:
 
     # ── Metric cards ──────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("💰 Cost Basis",   f"${cost_all:,.2f}",   help="Shares × avg cost")
+    c1.metric("💰 Cost Basis",   _m(cost_all),
+              help="Shares × avg cost")
     c2.metric("📊 Market Value",
-              f"${total_mkt:,.2f}"   if total_mkt  is not None else "N/A",
+              _m(total_mkt)   if total_mkt  is not None else "N/A",
               help="Priced positions only")
-    c3.metric("📈 P/L $",
-              f"${total_pl_d:+,.2f}" if total_pl_d is not None else "N/A",
-              delta=f"{total_pl_d:+,.2f}" if total_pl_d is not None else None)
+    c3.metric("📈 P/L",
+              _ms(total_pl_d) if total_pl_d is not None else "N/A",
+              delta=_ms(total_pl_d) if total_pl_d is not None else None)
     c4.metric("📉 P/L %",
               f"{total_pl_p:+.2f}%"  if total_pl_p is not None else "N/A",
               delta=f"{total_pl_p:+.2f}%" if total_pl_p is not None else None)
@@ -114,7 +137,7 @@ def render_portfolio_view(port, show_portfolio: bool, key_suffix: str) -> None:
 
     display_port = port.sort_values(sort_by, ascending=asc, na_position="last")
     st.dataframe(
-        style_holdings_table(display_port, show_portfolio=show_portfolio),
+        style_holdings_table(display_port, show_portfolio=show_portfolio, cx=cx),
         use_container_width=True, hide_index=True,
         height=min(max(80 + 35 * len(display_port), 150), 650),
     )
@@ -131,7 +154,7 @@ def render_portfolio_view(port, show_portfolio: bool, key_suffix: str) -> None:
 
     col_l, col_r = st.columns(2)
 
-    # Allocation pie
+    # Allocation pie (% based — no currency conversion needed)
     with col_l:
         st.subheader("🥧 Allocation")
         if show_portfolio:
@@ -162,29 +185,33 @@ def render_portfolio_view(port, show_portfolio: bool, key_suffix: str) -> None:
                                height=380, showlegend=False)
         st.plotly_chart(fig_pie, use_container_width=True, key=f"pie_{key_suffix}")
 
-    # P/L $ bar
+    # P/L $ bar (converted to display currency)
     with col_r:
-        st.subheader("💵 P/L $ per Ticker")
-        bar_data   = port.dropna(subset=["P/L $"]).sort_values("P/L $")
-        bar_colors = (
+        st.subheader(f"💵 P/L per Ticker  ({cx['code']})")
+        bar_data    = port.dropna(subset=["P/L $"]).sort_values("P/L $")
+        display_pl  = bar_data["P/L $"] * cx["rate"]
+        bar_colors  = (
             [color_map.get(pf, "#888") for pf in bar_data["Portfolio"]]
             if show_portfolio
             else ["#27ae60" if v >= 0 else "#e74c3c" for v in bar_data["P/L $"]]
         )
         fig_bar = go.Figure(go.Bar(
-            x=bar_data["Ticker"], y=bar_data["P/L $"],
+            x=bar_data["Ticker"],
+            y=display_pl,
             marker_color=bar_colors,
-            text=[f"${v:+,.2f}" for v in bar_data["P/L $"]],
+            text=[_ms(v) for v in bar_data["P/L $"]],
             textposition="outside", textfont=dict(size=10),
         ))
         fig_bar.update_layout(
-            xaxis_title=None, yaxis_title="Unrealised P/L ($)",
-            yaxis=dict(zeroline=True, zerolinewidth=1.5, zerolinecolor="#aaa"),
+            xaxis_title=None,
+            yaxis_title=f"Unrealised P/L ({sym})",
+            yaxis=dict(zeroline=True, zerolinewidth=1.5, zerolinecolor="#aaa",
+                       tickprefix=sym, tickformat=_tick_fmt(cx)),
             margin=dict(t=10, b=20, l=20, r=20), height=380,
         )
         st.plotly_chart(fig_bar, use_container_width=True, key=f"bar_{key_suffix}")
 
-    # P/L % bar (full width)
+    # P/L % bar (always %, no currency conversion)
     st.subheader("📊 P/L % per Ticker")
     pct_data   = port.dropna(subset=["P/L %"]).sort_values("P/L %")
     pct_colors = (
@@ -212,78 +239,83 @@ def render_performance_charts(
     value_series,
     weekly_perf,
     key_suffix: str,
+    cx: dict | None = None,
 ) -> None:
     """
-    Render the full performance view for one portfolio tab:
-      4 callout metrics (current value, total P/L, best week, worst week)
-      → portfolio market-value line chart
-      → running unrealised P/L curve
-      → weekly breakdown table (collapsed expander)
+    Render the full performance view for one portfolio tab.
 
-    key_suffix must be unique per tab (e.g. "all", "pf_0").
+    cx – currency context dict (default: USD). Monetary values in value_series
+         are assumed to be in USD; conversion happens at render time.
     """
     import pandas as pd
+    cx   = cx or DEFAULT_CX
+    _m, _ms = _cx_formatters(cx)
+    sym  = cx["symbol"]
+    dec  = cx["decimals"]
 
     if value_series is None or (isinstance(value_series, pd.DataFrame) and value_series.empty):
         st.info(
             "No performance data yet.  \n"
-            "This happens when all trade dates are after the start of the price CSV, "
-            "or no price CSV is found.  \n"
+            "This happens when all trade dates are after the start of the price CSV.  \n"
             "Run `fetch_tickers.py` to accumulate more history."
         )
         return
 
-    # ── Summary metrics ───────────────────────────────────────────────────────
-    latest_val    = float(value_series["market_value"].iloc[-1])
-    total_pl_d    = float(value_series["unrealized_pnl"].iloc[-1])
-    total_pl_pct  = float(value_series["unrealized_pnl_pct"].iloc[-1])
-    days_tracked  = len(value_series)
+    # ── Callout metrics ───────────────────────────────────────────────────────
+    latest_val   = float(value_series["market_value"].iloc[-1])
+    total_pl_d   = float(value_series["unrealized_pnl"].iloc[-1])
+    total_pl_pct = float(value_series["unrealized_pnl_pct"].iloc[-1])
+    days_tracked = len(value_series)
 
     best  = weekly_perf[weekly_perf["is_best"]].iloc[0]  if (not weekly_perf.empty and weekly_perf["is_best"].any())  else None
     worst = weekly_perf[weekly_perf["is_worst"]].iloc[0] if (not weekly_perf.empty and weekly_perf["is_worst"].any()) else None
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("📊 Current Value",  f"${latest_val:,.2f}",
+    c1.metric("📊 Current Value",
+              _m(latest_val),
               help=f"Based on {days_tracked} trading day(s) of history")
-    c2.metric("📈 Total P/L",      f"${total_pl_d:+,.2f}",
+    c2.metric("📈 Total P/L",
+              _ms(total_pl_d),
               delta=f"{total_pl_pct:+.2f}%")
     if best is not None:
         c3.metric(
             f"🏆 Best Week  ({best['week_end'].strftime('%d %b')})",
-            f"${best['pl_dollar']:+,.2f}",
-            delta=f"{best['pl_pct']:+.2f}%",
+            _ms(float(best["pl_dollar"])),
+            delta=f"{float(best['pl_pct']):+.2f}%",
         )
     else:
-        c3.metric("🏆 Best Week", "—", help="Need ≥ 2 data points to compute")
+        c3.metric("🏆 Best Week", "—", help="Need ≥ 2 data points")
     if worst is not None:
         c4.metric(
             f"📉 Worst Week  ({worst['week_end'].strftime('%d %b')})",
-            f"${worst['pl_dollar']:+,.2f}",
-            delta=f"{worst['pl_pct']:+.2f}%",
+            _ms(float(worst["pl_dollar"])),
+            delta=f"{float(worst['pl_pct']):+.2f}%",
         )
     else:
-        c4.metric("📉 Worst Week", "—", help="Need ≥ 2 data points to compute")
+        c4.metric("📉 Worst Week", "—", help="Need ≥ 2 data points")
 
     st.markdown("---")
 
     # ── Portfolio value line chart ────────────────────────────────────────────
+    mv_display = value_series["market_value"] * cx["rate"]
+
     fig_val = go.Figure()
     fig_val.add_trace(go.Scatter(
         x=value_series["date"],
-        y=value_series["market_value"],
+        y=mv_display,
         mode="lines+markers",
         name="Market Value",
         line=dict(color="#3498db", width=2.5),
         marker=dict(size=5, color="#3498db"),
         fill="tozeroy",
         fillcolor="rgba(52,152,219,0.07)",
-        hovertemplate="%{x|%d %b %y}<br>Value: $%{y:,.2f}<extra></extra>",
+        hovertemplate=f"%{{x|%d %b %y}}<br>Value: {sym}%{{y:,.{'0' if dec==0 else '2'}f}}<extra></extra>",
     ))
     fig_val.update_layout(
         title="Portfolio Value Over Time",
         xaxis_title=None,
-        yaxis_title="Market Value ($)",
-        yaxis=dict(tickprefix="$", tickformat=",.0f"),
+        yaxis_title=f"Market Value ({sym})",
+        yaxis=dict(tickprefix=sym, tickformat=_tick_fmt(cx)),
         xaxis_rangeslider_visible=False,
         margin=dict(t=40, b=20, l=20, r=20),
         height=360,
@@ -292,30 +324,29 @@ def render_performance_charts(
     st.plotly_chart(fig_val, use_container_width=True, key=f"perf_val_{key_suffix}")
 
     # ── Running P/L curve ─────────────────────────────────────────────────────
-    pl_vals   = value_series["unrealized_pnl"].tolist()
-    dot_colors = ["#27ae60" if v >= 0 else "#e74c3c" for v in pl_vals]
-    line_color = "#27ae60" if total_pl_d >= 0 else "#e74c3c"
-    fill_color = ("rgba(39,174,96,0.08)" if total_pl_d >= 0
-                  else "rgba(231,76,60,0.08)")
+    pl_display  = value_series["unrealized_pnl"] * cx["rate"]
+    dot_colors  = ["#27ae60" if v >= 0 else "#e74c3c" for v in value_series["unrealized_pnl"]]
+    line_color  = "#27ae60" if total_pl_d >= 0 else "#e74c3c"
+    fill_color  = "rgba(39,174,96,0.08)" if total_pl_d >= 0 else "rgba(231,76,60,0.08)"
 
     fig_pl = go.Figure()
     fig_pl.add_hline(y=0, line=dict(color="#aaa", width=1, dash="dash"))
     fig_pl.add_trace(go.Scatter(
         x=value_series["date"],
-        y=pl_vals,
+        y=pl_display,
         mode="lines+markers",
         name="Unrealised P/L",
         line=dict(color=line_color, width=2),
         marker=dict(size=5, color=dot_colors),
         fill="tozeroy",
         fillcolor=fill_color,
-        hovertemplate="%{x|%d %b %y}<br>P/L: $%{y:+,.2f}<extra></extra>",
+        hovertemplate=f"%{{x|%d %b %y}}<br>P/L: {sym}%{{y:+,.{'0' if dec==0 else '2'}f}}<extra></extra>",
     ))
     fig_pl.update_layout(
         title="Running Unrealised P/L",
         xaxis_title=None,
-        yaxis_title="P/L ($)",
-        yaxis=dict(tickprefix="$", tickformat="+,.0f",
+        yaxis_title=f"P/L ({sym})",
+        yaxis=dict(tickprefix=sym, tickformat=f"+{_tick_fmt(cx)}",
                    zeroline=True, zerolinewidth=1, zerolinecolor="#aaa"),
         xaxis_rangeslider_visible=False,
         margin=dict(t=40, b=20, l=20, r=20),
@@ -330,9 +361,9 @@ def render_performance_charts(
             disp = weekly_perf[["week_end", "value_open", "value_close",
                                  "pl_dollar", "pl_pct"]].copy()
             disp["week_end"]    = disp["week_end"].dt.strftime("%d %b %y")
-            disp["value_open"]  = disp["value_open"].map("${:,.2f}".format)
-            disp["value_close"] = disp["value_close"].map("${:,.2f}".format)
-            disp["pl_dollar"]   = disp["pl_dollar"].map("${:+,.2f}".format)
+            disp["value_open"]  = disp["value_open"].map(lambda v: _m(v))
+            disp["value_close"] = disp["value_close"].map(lambda v: _m(v))
+            disp["pl_dollar"]   = disp["pl_dollar"].map(lambda v: _ms(v))
             disp["pl_pct"]      = disp["pl_pct"].map("{:+.2f}%".format)
-            disp.columns        = ["Week End", "Open", "Close", "P/L $", "P/L %"]
+            disp.columns        = ["Week End", "Open", "Close", f"P/L ({sym})", "P/L %"]
             st.dataframe(disp, use_container_width=True, hide_index=True)
