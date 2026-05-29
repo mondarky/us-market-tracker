@@ -1,7 +1,7 @@
 """
 Page 2 — Market Data Browser
 Browse ticker price history from the latest fetched CSV.
-Expandable per-ticker candlestick charts with period stats.
+Expandable per-ticker candlestick charts with search + sort controls.
 """
 import sys
 from pathlib import Path
@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import streamlit as st
 from datetime import date
 
-from core.data      import load_prices, build_market_summary, TICKER_PRICE_DIR
-from core.utils     import style_market_summary, STALE_THRESHOLD_DAYS
+from core.data      import load_prices, build_market_summary
+from core.utils     import STALE_THRESHOLD_DAYS
 from components.charts  import render_ticker_chart
 from components.sidebar import render_data_freshness
 
@@ -21,6 +21,22 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Sort column mapping: display label → DataFrame column
+_SORT_OPTIONS = {
+    "Ticker A → Z":            ("Ticker",        True),
+    "Ticker Z → A":            ("Ticker",        False),
+    "Latest Close ↑ (cheap)":  ("Latest Close",  True),
+    "Latest Close ↓ (pricey)": ("Latest Close",  False),
+    "Period High ↓":           ("Period High",   False),
+    "Period High ↑":           ("Period High",   True),
+    "Period Low ↓":            ("Period Low",    False),
+    "Period Low ↑":            ("Period Low",    True),
+    "Period Range % ↓":        ("_range_pct",    False),
+    "Period Range % ↑":        ("_range_pct",    True),
+    "Trading Days ↓ (most)":   ("Trading Days",  False),
+    "Trading Days ↑ (least)":  ("Trading Days",  True),
+}
 
 
 def main() -> None:
@@ -52,51 +68,78 @@ def main() -> None:
         st.warning("Could not build summary — check the price CSV format.")
         return
 
-    # ── Summary table ─────────────────────────────────────────────────────────
-    st.subheader("📋 Ticker Summary")
-    st.caption(
-        "Click any column header to sort.  "
-        "🟢 OK · 🟠 STALE/SHORT · 🔴 ERROR"
-    )
-    display_cols = [c for c in
-                    ["Ticker", "Status", "Trading Days", "Date Range",
-                     "Latest Close", "Period High", "Period Low"]
-                    if c in summary.columns]
-    st.dataframe(
-        style_market_summary(summary[display_cols]),
-        use_container_width=True, hide_index=True,
-        height=min(80 + 35 * len(summary), 600),
-    )
-
-    st.markdown("---")
-
-    # ── Per-ticker expandable candlestick charts ───────────────────────────────
-    st.subheader("📈 Ticker Charts")
-    st.caption("Expand a ticker to view its candlestick price history.")
-
-    has_data = summary[summary["_has_data"]]
+    has_data = summary[summary["_has_data"]].copy()
     no_data  = summary[~summary["_has_data"]]
 
-    for _, row in has_data.iterrows():
-        ticker = row["Ticker"]
-        ok_df  = prices_df[
-            (prices_df["Ticker"] == ticker)
-            & prices_df["fetch_status"].str.startswith("OK", na=False)
-        ].dropna(subset=["Date"]).sort_values("Date").copy()
+    # Pre-compute period range % for sorting
+    has_data["_range_pct"] = (
+        (has_data["Period High"] - has_data["Period Low"])
+        / has_data["Period Low"] * 100
+    ).round(2)
 
-        if ok_df.empty:
-            continue
+    # ── Search + Sort controls ────────────────────────────────────────────────
+    st.subheader("📈 Ticker Charts")
 
-        label = (
-            f"{ticker}   "
-            f"Close ${row['Latest Close']:,.2f}  ·  "
-            f"High ${row['Period High']:,.2f}  ·  "
-            f"Low ${row['Period Low']:,.2f}  ·  "
-            f"{row['Date Range']}  ({row['Trading Days']} days)"
+    col_search, col_sort = st.columns([1, 2])
+    with col_search:
+        search = st.text_input(
+            "Search",
+            placeholder="Type a symbol, e.g. NLR …",
+            label_visibility="collapsed",
         )
-        with st.expander(label, expanded=False):
-            render_ticker_chart(ok_df, ticker, key_suffix=ticker)
+    with col_sort:
+        sort_label = st.selectbox(
+            "Sort",
+            options=list(_SORT_OPTIONS.keys()),
+            index=0,
+            label_visibility="collapsed",
+        )
 
+    # Apply search filter
+    if search.strip():
+        has_data = has_data[
+            has_data["Ticker"].str.contains(search.strip(), case=False, na=False)
+        ]
+
+    # Apply sort
+    sort_col, sort_asc = _SORT_OPTIONS[sort_label]
+    has_data = has_data.sort_values(sort_col, ascending=sort_asc, na_position="last")
+
+    # Result count hint
+    total = len(summary[summary["_has_data"]])
+    shown = len(has_data)
+    st.caption(
+        f"Showing **{shown}** of {total} tickers"
+        + (f" matching `{search.strip()}`" if search.strip() else "")
+        + f"  ·  sorted by **{sort_label}**"
+    )
+
+    # ── Expanders ─────────────────────────────────────────────────────────────
+    if has_data.empty:
+        st.info("No tickers match your search.")
+    else:
+        for _, row in has_data.iterrows():
+            ticker = row["Ticker"]
+            ok_df  = prices_df[
+                (prices_df["Ticker"] == ticker)
+                & prices_df["fetch_status"].str.startswith("OK", na=False)
+            ].dropna(subset=["Date"]).sort_values("Date").copy()
+
+            if ok_df.empty:
+                continue
+
+            label = (
+                f"{ticker}   "
+                f"Close ${row['Latest Close']:,.2f}  ·  "
+                f"High ${row['Period High']:,.2f}  ·  "
+                f"Low ${row['Period Low']:,.2f}  ·  "
+                f"Range {row['_range_pct']:+.1f}%  ·  "
+                f"{row['Date Range']}  ({row['Trading Days']} days)"
+            )
+            with st.expander(label, expanded=False):
+                render_ticker_chart(ok_df, ticker, key_suffix=ticker)
+
+    # ── Error tickers (collapsed) ─────────────────────────────────────────────
     if not no_data.empty:
         with st.expander(
             f"❌ {len(no_data)} ticker(s) with no data / ERROR", expanded=False
