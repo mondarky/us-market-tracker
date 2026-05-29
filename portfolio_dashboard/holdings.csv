@@ -1,8 +1,8 @@
-ticker,shares,avg_cost,purchase_date,account,notes
-REXC,26,21.23,21-May-26,Brokerage,
-OKLO,3.15781,63.4,21-May-26,Brokerage,
-NVDA,3,188.12,,Brokerage,
-NLR,0.87541,128.02,21-May-26,Brokerage,
-MP,1.78667,56.03,21-May-26,Brokerage,
-LEU,1.31212,171.66,21-May-26,Brokerage,
-BWxT,2.96354,202.68,21-May-26,Brokerage,
+ticker,shares,avg_cost,purchase_date,account,portfolio,notes
+REXC,26,21.23,21-May-26,Brokerage,Speculative,
+OKLO,3.15781,63.4,21-May-26,Brokerage,Speculative,
+NVDA,3,188.12,,Brokerage,Speculative,
+NLR,0.87541,128.02,21-May-26,Brokerage,Speculative,
+MP,1.78667,56.03,21-May-26,Brokerage,Speculative,
+LEU,1.31212,171.66,21-May-26,Brokerage,Speculative,
+BWxT,2.96354,202.68,21-May-26,Brokerage,Speculative,
