@@ -53,22 +53,81 @@ def save_trade_log(df: pd.DataFrame) -> None:
 @st.cache_data(ttl=300)
 def load_prices() -> tuple:
     """
-    Find and load the most-recently dated ticker CSV from data/ticker_price/.
-    Returns (DataFrame | None, filename | None, file_date | None).
-    Auto-picks the newest file by reverse-sorted filename (YYYYMMDD suffix).
+    Load and stitch ALL ticker CSVs from data/ticker_price/.
+    Deduplicates by (Ticker, Date), keeping the row from the most recently
+    fetched CSV — so each date always reflects the latest fetch's OHLCV and
+    fetch_status.  As more CSVs accumulate the historical depth grows
+    automatically without any manual configuration.
+
+    Returns (stitched_df | None, label | None, latest_file_date | None).
+    label is  "ticker_data_YYYYMMDD.csv"  for one file, or
+              "N files (YYYYMMDD → YYYYMMDD)"  for multiple.
     """
     csvs = sorted(TICKER_PRICE_DIR.glob("ticker_data_*.csv"), reverse=True)
+    # reverse=True → index 0 = newest file
     if not csvs:
         return None, None, None
-    path = csvs[0]
-    df   = pd.read_csv(path)
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    stem = path.stem   # e.g. "ticker_data_20260529"
+
+    frames = []
+    for rank, path in enumerate(csvs):   # rank 0 = newest
+        df = pd.read_csv(path)
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df["_rank"] = rank
+        frames.append(df)
+
+    combined = pd.concat(frames, ignore_index=True)
+
+    # Keep the row from the newest CSV (lowest rank) for each (Ticker, Date) pair
+    combined = (
+        combined
+        .sort_values("_rank")                                      # newest first
+        .drop_duplicates(subset=["Ticker", "Date"], keep="first")  # keep newest
+        .drop(columns=["_rank"])
+        .sort_values(["Ticker", "Date"])
+        .reset_index(drop=True)
+    )
+
+    # Date of the newest file (used for freshness check)
+    stem = csvs[0].stem   # e.g. "ticker_data_20260529"
     try:
         fdate = date(int(stem[-8:-4]), int(stem[-4:-2]), int(stem[-2:]))
     except Exception:
         fdate = None
-    return df, path.name, fdate
+
+    if len(csvs) == 1:
+        label = csvs[0].name
+    else:
+        oldest_stem = csvs[-1].stem
+        label = f"{len(csvs)} files ({oldest_stem[-8:]} → {stem[-8:]})"
+
+    return combined, label, fdate
+
+
+# ── Performance series ────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def load_performance_series(
+    trade_log,
+    prices_df,
+    portfolio: str | None = None,
+) -> pd.DataFrame:
+    """
+    Cached wrapper for get_portfolio_value_series().
+
+    Iterates over every trading date present in prices_df and reconstructs
+    open positions (FIFO) as of that date, then multiplies by the day's Close.
+    Must be cached — the inner loop is O(dates × trades).
+
+    Returns DataFrame: date, market_value, cost_basis,
+                       unrealized_pnl, unrealized_pnl_pct
+    """
+    from core.holdings import get_portfolio_value_series
+    if trade_log is None or prices_df is None:
+        return pd.DataFrame()
+    if (isinstance(trade_log, pd.DataFrame) and trade_log.empty) or \
+       (isinstance(prices_df, pd.DataFrame) and prices_df.empty):
+        return pd.DataFrame()
+    return get_portfolio_value_series(trade_log, prices_df, portfolio=portfolio)
 
 
 # ── Market summary ────────────────────────────────────────────────────────────
@@ -76,17 +135,20 @@ def load_prices() -> tuple:
 @st.cache_data(ttl=300)
 def build_market_summary(prices_df) -> pd.DataFrame:
     """
-    Build a one-row-per-ticker summary from the price CSV.
-    Handles any number of tickers and any date range (1 mo, 6 mo, 1 yr …).
-    Tickers with ERROR status appear with N/A price columns.
+    Build a one-row-per-ticker summary from the (stitched) price DataFrame.
+    fetch_status is taken from the row with the latest Date for each ticker,
+    so it always reflects the most recent fetch run.
     """
     if prices_df is None or (isinstance(prices_df, pd.DataFrame) and prices_df.empty):
         return pd.DataFrame()
 
     rows = []
     for ticker, grp in prices_df.groupby("Ticker", sort=True):
-        ok         = grp[grp["fetch_status"].str.startswith("OK", na=False)].copy()
-        raw_status = grp["fetch_status"].iloc[0]
+        ok = grp[grp["fetch_status"].str.startswith("OK", na=False)].copy()
+
+        # Use status from the latest-dated row (= most recent CSV after stitching)
+        latest_row = grp.dropna(subset=["Date"]).sort_values("Date").iloc[-1]
+        raw_status = latest_row["fetch_status"]
 
         if ok.empty or ok["Date"].isna().all():
             rows.append({

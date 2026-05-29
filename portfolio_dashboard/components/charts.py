@@ -204,3 +204,135 @@ def render_portfolio_view(port, show_portfolio: bool, key_suffix: str) -> None:
         margin=dict(t=10, b=20, l=20, r=50), height=350,
     )
     st.plotly_chart(fig_pct, use_container_width=True, key=f"pct_{key_suffix}")
+
+
+# ── Performance charts ────────────────────────────────────────────────────────
+
+def render_performance_charts(
+    value_series,
+    weekly_perf,
+    key_suffix: str,
+) -> None:
+    """
+    Render the full performance view for one portfolio tab:
+      4 callout metrics (current value, total P/L, best week, worst week)
+      → portfolio market-value line chart
+      → running unrealised P/L curve
+      → weekly breakdown table (collapsed expander)
+
+    key_suffix must be unique per tab (e.g. "all", "pf_0").
+    """
+    import pandas as pd
+
+    if value_series is None or (isinstance(value_series, pd.DataFrame) and value_series.empty):
+        st.info(
+            "No performance data yet.  \n"
+            "This happens when all trade dates are after the start of the price CSV, "
+            "or no price CSV is found.  \n"
+            "Run `fetch_tickers.py` to accumulate more history."
+        )
+        return
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    latest_val    = float(value_series["market_value"].iloc[-1])
+    total_pl_d    = float(value_series["unrealized_pnl"].iloc[-1])
+    total_pl_pct  = float(value_series["unrealized_pnl_pct"].iloc[-1])
+    days_tracked  = len(value_series)
+
+    best  = weekly_perf[weekly_perf["is_best"]].iloc[0]  if (not weekly_perf.empty and weekly_perf["is_best"].any())  else None
+    worst = weekly_perf[weekly_perf["is_worst"]].iloc[0] if (not weekly_perf.empty and weekly_perf["is_worst"].any()) else None
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("📊 Current Value",  f"${latest_val:,.2f}",
+              help=f"Based on {days_tracked} trading day(s) of history")
+    c2.metric("📈 Total P/L",      f"${total_pl_d:+,.2f}",
+              delta=f"{total_pl_pct:+.2f}%")
+    if best is not None:
+        c3.metric(
+            f"🏆 Best Week  ({best['week_end'].strftime('%d %b')})",
+            f"${best['pl_dollar']:+,.2f}",
+            delta=f"{best['pl_pct']:+.2f}%",
+        )
+    else:
+        c3.metric("🏆 Best Week", "—", help="Need ≥ 2 data points to compute")
+    if worst is not None:
+        c4.metric(
+            f"📉 Worst Week  ({worst['week_end'].strftime('%d %b')})",
+            f"${worst['pl_dollar']:+,.2f}",
+            delta=f"{worst['pl_pct']:+.2f}%",
+        )
+    else:
+        c4.metric("📉 Worst Week", "—", help="Need ≥ 2 data points to compute")
+
+    st.markdown("---")
+
+    # ── Portfolio value line chart ────────────────────────────────────────────
+    fig_val = go.Figure()
+    fig_val.add_trace(go.Scatter(
+        x=value_series["date"],
+        y=value_series["market_value"],
+        mode="lines+markers",
+        name="Market Value",
+        line=dict(color="#3498db", width=2.5),
+        marker=dict(size=5, color="#3498db"),
+        fill="tozeroy",
+        fillcolor="rgba(52,152,219,0.07)",
+        hovertemplate="%{x|%d %b %y}<br>Value: $%{y:,.2f}<extra></extra>",
+    ))
+    fig_val.update_layout(
+        title="Portfolio Value Over Time",
+        xaxis_title=None,
+        yaxis_title="Market Value ($)",
+        yaxis=dict(tickprefix="$", tickformat=",.0f"),
+        xaxis_rangeslider_visible=False,
+        margin=dict(t=40, b=20, l=20, r=20),
+        height=360,
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig_val, use_container_width=True, key=f"perf_val_{key_suffix}")
+
+    # ── Running P/L curve ─────────────────────────────────────────────────────
+    pl_vals   = value_series["unrealized_pnl"].tolist()
+    dot_colors = ["#27ae60" if v >= 0 else "#e74c3c" for v in pl_vals]
+    line_color = "#27ae60" if total_pl_d >= 0 else "#e74c3c"
+    fill_color = ("rgba(39,174,96,0.08)" if total_pl_d >= 0
+                  else "rgba(231,76,60,0.08)")
+
+    fig_pl = go.Figure()
+    fig_pl.add_hline(y=0, line=dict(color="#aaa", width=1, dash="dash"))
+    fig_pl.add_trace(go.Scatter(
+        x=value_series["date"],
+        y=pl_vals,
+        mode="lines+markers",
+        name="Unrealised P/L",
+        line=dict(color=line_color, width=2),
+        marker=dict(size=5, color=dot_colors),
+        fill="tozeroy",
+        fillcolor=fill_color,
+        hovertemplate="%{x|%d %b %y}<br>P/L: $%{y:+,.2f}<extra></extra>",
+    ))
+    fig_pl.update_layout(
+        title="Running Unrealised P/L",
+        xaxis_title=None,
+        yaxis_title="P/L ($)",
+        yaxis=dict(tickprefix="$", tickformat="+,.0f",
+                   zeroline=True, zerolinewidth=1, zerolinecolor="#aaa"),
+        xaxis_rangeslider_visible=False,
+        margin=dict(t=40, b=20, l=20, r=20),
+        height=260,
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig_pl, use_container_width=True, key=f"perf_pl_{key_suffix}")
+
+    # ── Weekly breakdown (collapsed) ──────────────────────────────────────────
+    if not weekly_perf.empty:
+        with st.expander(f"📅 Weekly Breakdown  ({len(weekly_perf)} week(s))", expanded=False):
+            disp = weekly_perf[["week_end", "value_open", "value_close",
+                                 "pl_dollar", "pl_pct"]].copy()
+            disp["week_end"]    = disp["week_end"].dt.strftime("%d %b %y")
+            disp["value_open"]  = disp["value_open"].map("${:,.2f}".format)
+            disp["value_close"] = disp["value_close"].map("${:,.2f}".format)
+            disp["pl_dollar"]   = disp["pl_dollar"].map("${:+,.2f}".format)
+            disp["pl_pct"]      = disp["pl_pct"].map("{:+.2f}%".format)
+            disp.columns        = ["Week End", "Open", "Close", "P/L $", "P/L %"]
+            st.dataframe(disp, use_container_width=True, hide_index=True)

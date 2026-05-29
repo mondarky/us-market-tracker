@@ -90,6 +90,59 @@ def build_portfolio(
     return pd.DataFrame(rows)
 
 
+def get_weekly_performance(value_series: pd.DataFrame) -> pd.DataFrame:
+    """
+    Resample a daily portfolio value series to Friday-ending weeks.
+
+    For each week that has at least one data point:
+        week_end        – last trading date of that week (index label)
+        value_open      – first market_value in the week
+        value_close     – last  market_value in the week
+        pl_dollar       – value_close − value_open  (week P/L $)
+        pl_pct          – pl_dollar / value_open × 100
+        is_best         – True for the week with the highest pl_dollar
+        is_worst        – True for the week with the lowest  pl_dollar
+
+    Returns an empty DataFrame if the series is empty or has < 2 data points.
+    """
+    if value_series.empty or len(value_series) < 2:
+        return pd.DataFrame()
+
+    df = value_series.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+
+    # W-FRI: each bin ends on the Friday of that calendar week
+    weekly_open  = df["market_value"].resample("W-FRI").first().dropna()
+    weekly_close = df["market_value"].resample("W-FRI").last().dropna()
+
+    # Only include weeks where both open and close exist
+    idx     = weekly_open.index.intersection(weekly_close.index)
+    if idx.empty:
+        return pd.DataFrame()
+
+    weeks = pd.DataFrame({
+        "week_end":    idx,
+        "value_open":  weekly_open.loc[idx].values,
+        "value_close": weekly_close.loc[idx].values,
+    })
+    weeks["pl_dollar"] = weeks["value_close"] - weeks["value_open"]
+    weeks["pl_pct"]    = (weeks["pl_dollar"] / weeks["value_open"] * 100).round(4)
+
+    if len(weeks) > 0:
+        weeks["is_best"]  = weeks["pl_dollar"] == weeks["pl_dollar"].max()
+        weeks["is_worst"] = weeks["pl_dollar"] == weeks["pl_dollar"].min()
+        # If all weeks are identical, flag the last one as "best"
+        if (weeks["pl_dollar"] == weeks["pl_dollar"].iloc[0]).all():
+            weeks["is_best"]  = False
+            weeks["is_worst"] = False
+    else:
+        weeks["is_best"]  = False
+        weeks["is_worst"] = False
+
+    return weeks.reset_index(drop=True)
+
+
 def portfolio_summary(port: pd.DataFrame) -> pd.DataFrame:
     """Roll up per-(portfolio, ticker) rows to one summary row per portfolio."""
     rows = []
