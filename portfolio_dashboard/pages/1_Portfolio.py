@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
-from core.data      import load_prices, load_trade_log, load_fx_rates
+from core.data      import load_prices, load_trade_log, load_fx_rates, load_fx_config
 from core.analysis  import build_portfolio, portfolio_summary
 from core.utils     import style_portfolio_summary
 from components.charts  import render_portfolio_view
@@ -27,10 +27,11 @@ def main() -> None:
     prices_df, price_file, price_date = load_prices()
     trade_log = load_trade_log()
     fx_rates  = load_fx_rates()
+    fx_config = load_fx_config()
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        cx = render_currency_selector(fx_rates)
+        cx = render_currency_selector(fx_rates, currencies_dict=fx_config)
         st.markdown("---")
         render_data_freshness(price_file, price_date)
         st.markdown("---")

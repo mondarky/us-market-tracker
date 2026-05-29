@@ -15,6 +15,16 @@ FETCHER_DIR      = _PKG_ROOT.parent / "ticker_fetcher"   # ../ticker_fetcher/
 DATA_DIR         = _PKG_ROOT / "data"
 TICKER_PRICE_DIR = DATA_DIR / "ticker_price"
 TRADE_LOG_FILE   = DATA_DIR / "trade_log.csv"
+FX_PAIR_DIR      = DATA_DIR / "fx_pair"
+FX_PAIR_FILE     = FX_PAIR_DIR / "fx_currencies.csv"
+
+# Fallback metadata used when fx_currencies.csv is missing or a code is absent
+_FX_DEFAULTS = {
+    "USD": {"symbol": "$",   "decimals": 2, "name": "US Dollar"},
+    "THB": {"symbol": "฿",   "decimals": 2, "name": "Thai Baht"},
+    "JPY": {"symbol": "¥",   "decimals": 0, "name": "Japanese Yen"},
+    "HKD": {"symbol": "HK$", "decimals": 2, "name": "Hong Kong Dollar"},
+}
 
 
 # ── Trade log I/O ─────────────────────────────────────────────────────────────
@@ -36,23 +46,64 @@ def load_trade_log() -> pd.DataFrame:
         return create_empty_trade_log(TRADE_LOG_FILE)
 
 
+def load_fx_config() -> dict:
+    """
+    Read data/fx_pair/fx_currencies.csv and return a CURRENCIES-style dict.
+
+    Returns {code: {"symbol", "decimals", "name", "yfinance_pair"}, ...}.
+    USD is always included from the hardcoded fallback.
+    Falls back to _FX_DEFAULTS if the file is missing or unreadable.
+    Not cached — the file is tiny and only read at page load.
+    """
+    result = {"USD": {**_FX_DEFAULTS["USD"], "yfinance_pair": None}}
+    if not FX_PAIR_FILE.exists():
+        for code, meta in _FX_DEFAULTS.items():
+            if code != "USD":
+                result[code] = {**meta, "yfinance_pair": None}
+        return result
+    try:
+        df = pd.read_csv(FX_PAIR_FILE, dtype=str).dropna(subset=["code"])
+        for _, row in df.iterrows():
+            code = str(row["code"]).strip().upper()
+            if not code:
+                continue
+            result[code] = {
+                "symbol":        str(row.get("symbol",   "")).strip() or _FX_DEFAULTS.get(code, {}).get("symbol", code),
+                "decimals":      int(row.get("decimals", 2)),
+                "name":          str(row.get("name",     code)).strip(),
+                "yfinance_pair": str(row.get("yfinance_pair", "")).strip() or None,
+            }
+    except Exception:
+        pass   # silently fall back to defaults already in result
+    return result
+
+
 @st.cache_data(ttl=3600)   # 1-hour cache — daily rate is sufficient
 def load_fx_rates() -> dict:
     """
-    Fetch current USD → THB / JPY / HKD exchange rates via yfinance.
-    Returns {"USD": 1.0, "THB": float|None, "JPY": float|None, "HKD": float|None}.
-    None means the rate could not be fetched; the UI will hide that option.
-    Cached for 1 hour — no need for real-time rates.
+    Fetch current exchange rates for every currency listed in
+    data/fx_pair/fx_currencies.csv via yfinance.
+
+    Returns {code: float | None, ...} always including "USD": 1.0.
+    None means the rate could not be fetched; the UI hides that option.
+    Reads the CSV fresh every call (TTL=1 h) so new rows appear automatically.
     """
     import yfinance as yf
-    pairs = {"THB": "USDTHB=X", "JPY": "USDJPY=X", "HKD": "USDHKD=X"}
     rates: dict = {"USD": 1.0}
-    for code, ticker in pairs.items():
+    config = load_fx_config()
+
+    for code, meta in config.items():
+        if code == "USD":
+            continue
+        pair = meta.get("yfinance_pair")
+        if not pair:
+            rates[code] = None
+            continue
         try:
-            rates[code] = float(yf.Ticker(ticker).fast_info["last_price"])
+            rates[code] = float(yf.Ticker(pair).fast_info["last_price"])
         except Exception:
             try:
-                hist = yf.Ticker(ticker).history(period="2d")["Close"].dropna()
+                hist = yf.Ticker(pair).history(period="2d")["Close"].dropna()
                 rates[code] = float(hist.iloc[-1]) if not hist.empty else None
             except Exception:
                 rates[code] = None

@@ -27,18 +27,22 @@ CURRENCIES = {
 }
 
 
-def make_cx(code: str, fx_rates: dict) -> dict:
+def make_cx(code: str, fx_rates: dict, currencies_dict: dict | None = None) -> dict:
     """
     Build a currency-context dict from a code and a rates lookup.
 
+    currencies_dict: from load_fx_config() — takes priority over CURRENCIES.
+                     Falls back to CURRENCIES (hardcoded) if None.
+
     Returned dict:
-        code      – "USD" / "THB" / "JPY" / "HKD"
+        code      – "USD" / "THB" / "JPY" / "HKD" / any CSV-listed code
         symbol    – "฿" etc.
         decimals  – 0 for JPY, 2 for others
         name      – full currency name
         rate      – multiplier to apply to USD amounts before display
     """
-    info = CURRENCIES.get(code, CURRENCIES["USD"])
+    lookup = currencies_dict if currencies_dict is not None else CURRENCIES
+    info   = lookup.get(code) or lookup.get("USD") or CURRENCIES["USD"]
     return {
         "code":     code,
         "symbol":   info["symbol"],

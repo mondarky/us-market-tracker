@@ -140,24 +140,33 @@ def render_trade_log_editor(trade_log) -> None:
         st.rerun()
 
 
-def render_currency_selector(fx_rates: dict) -> dict:
+def render_currency_selector(
+    fx_rates: dict,
+    currencies_dict: dict | None = None,
+) -> dict:
     """
-    Render a currency dropdown above the other sidebar widgets.
+    Render a currency dropdown.
+    currencies_dict: from load_fx_config() — drives the label and metadata.
+                     Falls back to CURRENCIES (hardcoded) if None.
     Only shows currencies whose rate was successfully fetched.
     Sets st.session_state["display_currency"] and returns the cx dict.
     Call inside a `with st.sidebar:` block.
     """
-    available = ["USD"] + [c for c in ["THB", "JPY", "HKD"]
-                           if fx_rates.get(c) is not None]
+    lookup    = currencies_dict if currencies_dict is not None else CURRENCIES
+    available = ["USD"] + [c for c in lookup if c != "USD"
+                           and fx_rates.get(c) is not None]
 
     selected = st.selectbox(
         "💱 Display currency",
         options=available,
-        format_func=lambda c: f"{CURRENCIES[c]['symbol']} {c} — {CURRENCIES[c]['name']}",
+        format_func=lambda c: (
+            f"{lookup[c]['symbol']} {c} — {lookup[c]['name']}"
+            if c in lookup else c
+        ),
         key="display_currency",
     )
 
-    cx = make_cx(selected, fx_rates)
+    cx = make_cx(selected, fx_rates, currencies_dict=currencies_dict)
 
     if selected != "USD":
         rate = cx["rate"]

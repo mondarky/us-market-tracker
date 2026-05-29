@@ -1,0 +1,4 @@
+code,yfinance_pair,symbol,decimals,name
+THB,USDTHB=X,฿,2,Thai Baht
+JPY,USDJPY=X,¥,0,Japanese Yen
+HKD,USDHKD=X,HK$,2,Hong Kong Dollar
